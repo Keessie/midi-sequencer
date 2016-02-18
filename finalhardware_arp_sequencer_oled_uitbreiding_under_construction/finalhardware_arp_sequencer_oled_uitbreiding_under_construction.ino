@@ -193,6 +193,9 @@ int noteLengthBuffer[127];      // stores notelengths of played notes
 int stepCounter = 1;             // determines what the play position is
 int stepSelect = 1;              // determines what the note edit position is
 int stepLength = 16;             // determines amounts of steps
+
+int arpLength = 0;              // determines amount of arp steps
+
 boolean sequencerPaused = true; // pause or play, controlled by external software
 boolean Pause = true;           // pause or play, triggered by controller pause button
 int Mode;                   // the workmode the sequencer is in
@@ -211,7 +214,10 @@ const byte MIDICHANNEL = 6;
 // mode 3; arpeggiator | mode 4; setup steplength |
 //mode 5; setup shuffle | mode 6; setup midiChannel |
 
-byte notes[32][10][5] = {0};             // 16 kolommen, 10 rijen, 6 lagen : 0, mute, 1, velocity, 2, length, 3 pitch, 4 octave
+byte notes[32][10][5] = {0};             // 32 kolommen, 10 rijen, 5 lagen : 0, mute, 1, velocity, 2, length, 3 pitch, 4 octave
+byte arpNotes[33][5] = {0};             // 32 steps, 5 lagen 0, mute, 1, velocity, 2, length, 3 pitch, 4 octave
+byte arpSequence = 0;
+
 const byte MUTE = 0;
 const byte VELOCITY = 1;
 const byte LENGTH = 2;
@@ -219,7 +225,7 @@ const byte PITCH = 3;
 const byte OCTAVE = 4;
 
 //////// ENABLE OR DISABLE DEBUG
-#define Sprintln(a)  //(Serial.println(a))
+#define Sprintln(a)  (Serial.println(a))
 
 
 void setup() {
@@ -263,21 +269,21 @@ void loop() {
 
   portState = kpd.pinState_set();       // read pushbuttons that are located on  mcp pins GPB5 t/m GPB7
   //Sprintln(portState);
-  if (portState == 45045) {
-  encPres[1] = true;
-  Sprintln("knopje 1");
+  if (portState == 49151) {
+    encPres[1] = true;
+    Sprintln("knopje 1");
   }
-  if (portState == 28661) {
-  encPres[0] = true;
-  Sprintln("knopje 0");
+  if (portState == 32767) {
+    encPres[0] = true;
+    Sprintln("knopje 0");
   }
-  if (portState == 53237) {
-  encPres[2] = true;
-  Sprintln("knopje 2");
+  if (portState == 57343) {
+    encPres[2] = true;
+    Sprintln("knopje 2");
   }
 
   else {
-  buttonState[4] = 0;
+    buttonState[4] = 0;
   }
 
   if (DRE(encPres[2], buttonState[4])) {   //**straks uitbreiden naar 7
@@ -348,7 +354,10 @@ void updateOLED() {
     if (showMenu == 1) {
       drawMenu();
     }
-    else {
+    /* if (showMenu == 1 && Mode == STEPVIEW) {                  // hier nog aan werken
+       draw(stringBuffer, valueBuffer);
+     }
+     */else {
       draw(stringBuffer, valueBuffer);
     }
   } while ( u8g.nextPage() );
@@ -415,25 +424,41 @@ void draw(String i, int n) {
 //***** Send MIDI ********
 void midiNote(int i, int j) {// int i to determine noteposition, int j to determine to send note on or off message
   if (j == 1) {
-    for (int q = 0; q < 10; q++)                      // usbmidi.sendnoteon(pitch, velocity, midichannel)
-    {
-      if (notes[stepCounter][q][VELOCITY] > 0 ) {
-        int noteVelBuffer[10];
-        noteVelBuffer[q] = notes[stepCounter][q][VELOCITY];
+    Sprintln("stepCounter");
+    Sprintln(stepCounter);
+    if (Mode < ARP) {
+      for (int q = 0; q < 10; q++)                      // usbmidi.sendnoteon(pitch, velocity, midichannel)
+      {
+        if (notes[stepCounter][q][VELOCITY] > 0 ) {
+          int noteVelBuffer[10];
+          noteVelBuffer[q] = notes[stepCounter][q][VELOCITY];
 
-        int notePitchBuffer[10];
-        notePitchBuffer[q] = notes[stepCounter][q][PITCH];
-        noteLengthBuffer[notePitchBuffer[q]] = notes[stepCounter][q][LENGTH];    // stores the notelength of the played note in the buffer with the corresponding pitch
+          int notePitchBuffer[10];
+          notePitchBuffer[q] = notes[stepCounter][q][PITCH];
+          noteLengthBuffer[notePitchBuffer[q]] = notes[stepCounter][q][LENGTH];    // stores the notelength of the played note in the buffer with the corresponding pitch
 
-        if (notePitchBuffer[q] > 0 && notePitchBuffer[q] <= 127) {
-          usbMIDI.sendNoteOn(((notePitchBuffer[q]) + 35), noteVelBuffer[q] , midiChannel);    // add in octave correction to pitch
-          timerOld[notePitchBuffer[q]] = timerNew;
-          Sprintln("noot gespeeld");
-          Sprintln(notePitchBuffer[q]);
+          if (notePitchBuffer[q] > 0 && notePitchBuffer[q] <= 127) {
+            usbMIDI.sendNoteOn(((notePitchBuffer[q]) + 35), noteVelBuffer[q] , midiChannel);    // add in octave correction to pitch
+            timerOld[notePitchBuffer[q]] = timerNew;
+
+            Sprintln("noot gespeeld");
+            Sprintln(notePitchBuffer[q]);
+
+          }
         }
       }
+
+    }
+    if (Mode == ARP && arpNotes[stepCounter][PITCH] > 0 && arpNotes[stepCounter][PITCH] <= 127) {
+      usbMIDI.sendNoteOn((arpNotes[stepCounter][PITCH] + 35) , arpNotes[stepCounter][VELOCITY] , midiChannel);   // add in octave correction to pitch
+      timerOld[arpNotes[stepCounter][PITCH]] = timerNew;
+      noteLengthBuffer[arpNotes[stepCounter][PITCH]] = arpNotes[stepCounter][LENGTH];
+      Sprintln("noot gespeeld");
+      Sprintln(arpNotes[stepCounter][PITCH]);
+
     }
   }
+
   if (j == 0) {
     Sprintln("noot gestopt");
     for (int q = 0; q < 10; q++)                      // usbmidi.sendnoteon(pitch, velocity, midichannel)
@@ -451,7 +476,7 @@ void midiNote(int i, int j) {// int i to determine noteposition, int j to determ
   }
 }
 
-///// Do things with keypresses ***************
+///// Do things with keypresses ***************o
 void keyPressed() {
   for (int i = 0; i < LIST_MAX; i++) // Scan the whole key list.
   {
@@ -513,6 +538,24 @@ void keyPressed() {
               usbMIDI.sendNoteOn((kpd.key[i].kchar + 11), 100, midiChannel);
             }
 
+            if (Mode == ARP) {
+              if (currentKey <= 37) {
+                bool found = false;
+                for (int q = 0 ; q <= 32; q++) {
+                  if (arpNotes[q][PITCH] == currentKey) {   //if the current selected note corresponds with an already played note
+                    arpNotes[q][PITCH] = 0;
+                    arpLength --;
+                    found = true;
+                    sortArpNotes(arpLength);
+                    break;
+                  }
+                }
+                if (!found) {
+                  addNote(currentKey);
+                }
+              }
+            }
+
             if ((Mode == STEPLENGTH) && (currentKey > 0) && (currentKey < 33)) {
               stepLength = currentKey;
             }
@@ -565,12 +608,14 @@ void keyPressed() {
 // Take action with buttons **************
 void buttonRead(int m) {
 
-  if (m == 0) {     /// if button 0 is pressed,pause sequencer
+  if (m == 0) {/// if button 0 is pressed,pause sequencer
+   
     if (sequencerPaused == true) {    // play pause gedoe
       counter = 0;
       stepCounter = 1;
       sequencerPaused = false;
       Sprintln("play");
+    
     }
     else {
       sequencerPaused = false;
@@ -586,9 +631,16 @@ void buttonRead(int m) {
       Mode = STEPVIEW ;
       Sprintln("button pressed, STEPVIEW");
     }
-    else {
+    else if (Mode == STEPVIEW) {
       Mode = SEQVIEW ;
       Sprintln("button pressed, SEQVIEW");
+    }
+
+    if (Mode == ARP) {
+      for (int i = 0; i <= 32; i++) {
+        arpNotes[i][PITCH] = 0;
+      }
+      arpLength = 0;
     }
   }
 
@@ -598,6 +650,10 @@ void buttonRead(int m) {
       Sprintln("stepSelect ");
       Sprintln(stepSelect);
     }
+    if (Mode == ARP && arpSequence > 0) {
+      arpSequence --;
+      sortArpNotes(arpLength);
+    }
   }
 
   if (m == 3) {
@@ -605,6 +661,10 @@ void buttonRead(int m) {
       stepSelect ++;
       Sprintln("stepSelect ");
       Sprintln(stepSelect);
+    }
+    if (Mode == ARP && arpSequence < 1) {
+      arpSequence++;
+      sortArpNotes(arpLength);
     }
   }
 
@@ -627,26 +687,52 @@ void buttonRead(int m) {
 void addNote(int n) {     //  n is the key that is pressed
 
   int found = -1;               // the counter that goes looking for a free spot
-  for (int i = 0; i < 10; i++) {   // slot 0 up to 10(max assigned array size at this moment)
-    if (notes[stepSelect][i][PITCH] == 0) {   // if a free spot is found
-      found = i;
-      Sprintln("toegevoegd aan positie ");
-      Sprintln(found);
-      break;
+
+  if (Mode == ARP) {
+    for (int i = 1; i <= 32; i++) {   // slot 0 up to 10(max assigned array size at this moment)
+      if (arpNotes[i][PITCH] == 0) {   // if a free spot is found
+        found = i;
+        Sprintln("arpnoot toegevoegd aan positie ");
+        Sprintln(found);
+        break;
+      }
+    }
+    if (found >= 0) {
+      arpNotes[found][MUTE] = 0;
+      arpNotes[found][VELOCITY] = 80;
+      arpNotes[found][LENGTH] = 40;
+      arpNotes[found][OCTAVE] = 3;
+      arpNotes[found][PITCH] = n;
+      Sprintln("arpnote added ");
+      arpLength ++;
+      Sprintln("arplength");
+      Sprintln(arpLength);
+      sortArpNotes(arpLength);
     }
   }
 
-  // slot 0 up to 10(max assigned array size at this moment)   // all values are bytes; max 255 min 0;
-  // add en remove note, samenvoegen in mutate note.
-  if (found >= 0) {
-    int q = found;
-    notes[stepSelect][q][MUTE] = 0;   // mute
-    notes[stepSelect][q][VELOCITY] = 80;   // velocity
-    notes[stepSelect][q][LENGTH] = 40;   // length
-    notes[stepSelect][q][OCTAVE] = 3;   // octave 3; is the default position
-    notes[stepSelect][q][PITCH] = n;  // pitch
-    Sprintln("note added ");
-    Sprintln(notes[stepSelect][q][4]);
+  else {
+    for (int i = 0; i < 10; i++) {   // slot 0 up to 10(max assigned array size at this moment)
+      if (notes[stepSelect][i][PITCH] == 0) {   // if a free spot is found
+        found = i;
+        Sprintln("toegevoegd aan positie ");
+        Sprintln(found);
+        break;
+      }
+    }
+
+    // slot 0 up to 10(max assigned array size at this moment)   // all values are bytes; max 255 min 0;
+    // add en remove note, samenvoegen in mutate note.
+    if (found >= 0) {
+      int q = found;
+      notes[stepSelect][q][MUTE] = 0;   // mute
+      notes[stepSelect][q][VELOCITY] = 80;   // velocity
+      notes[stepSelect][q][LENGTH] = 40;   // length
+      notes[stepSelect][q][OCTAVE] = 3;   // octave 3; is the default position
+      notes[stepSelect][q][PITCH] = n;  // pitch
+      Sprintln("note added ");
+      Sprintln(notes[stepSelect][q][4]);
+    }
   }
   updateLed(stepCounter);
 }
@@ -668,6 +754,7 @@ void removeNote(int n) {       // n is the key that is pressed
     Sprintln(notes[stepSelect][q][0]);
   }
   updateLed(stepCounter);
+
 }
 
 // Update all visual things *************
@@ -687,15 +774,17 @@ void updateLed(int x) {               // change to write shift register and the 
     digitalWrite(menuLed[i], LOW);
   }
 
+
+  ///
   if (Mode == SEQVIEW) {
     digitalWrite(menuLed[1], 1);
     digitalWrite(menuLed[0], 1);
 
-    for (int i = 0; i < stepLength; i= i + 4) {    //write every first beat of measure high
+    for (int i = 0; i < stepLength; i = i + 4) {   //write every first beat of measure high
       Tlc.set(ledAdress[i][2], 1);
       Tlc.set(ledAdress[i][1], 1);
     }
-    
+
     Tlc.set(ledAdress[stepCounter - 1][1], 19 );   // write the current stepCounter value high
     ledAdressOldbuffer[stepCounter - 1][1] = 19;
 
@@ -718,16 +807,25 @@ void updateLed(int x) {               // change to write shift register and the 
       }
     }
   }
+  if (Mode == ARP) {
+    for (int r = 0 ; r <= 32; r ++) {
+      if (arpNotes[r][PITCH] > 0) {
+        Tlc.set(ledAdress[arpNotes[r][PITCH] - 1][0], 23 );
+      }
+    }
+  Tlc.set(ledAdress[arpNotes[stepCounter][PITCH] - 1][1], 1 );      // write the current played note high
+  }
+  
   if (Mode == KEYS) {
     digitalWrite(menuLed[1], HIGH);
   }
   if (Mode == STEPLENGTH) {
-    
-      for (int i = 7; i < 33; i= i + 8) {    //write every 8th step high
+
+    for (int i = 7; i < 33; i = i + 8) {   //write every 8th step high
       Tlc.set(ledAdress[i][2], 1);
       Tlc.set(ledAdress[i][1], 1);
     }
-    
+
     Tlc.set(ledAdress[stepLength - 1][0], 23); // write the stepLength high
     ledAdressOldbuffer[stepLength - 1][0] = 23;
 
@@ -888,6 +986,7 @@ void encAdjust(int i, int n) {     // i; welke encoder command wordt gestuurd, n
         Mode ++;
         Sprintln("Mode");
         Sprintln(Mode);
+
       }
       if ((Mode > ARP) && (n == LEFT)) {
         Mode --;
@@ -896,6 +995,9 @@ void encAdjust(int i, int n) {     // i; welke encoder command wordt gestuurd, n
     Sprintln("Mode");
     Sprintln(Mode);
     //timerEnc = 1;
+    if (Mode == ARP) {
+      stepCounter = 0;
+    }
   }
 
   updateLed(stepCounter);
@@ -904,28 +1006,41 @@ void encAdjust(int i, int n) {     // i; welke encoder command wordt gestuurd, n
 
 // Watch time *****************************
 void RealTimeSystem(byte realtimebyte) {
-  if ((Mode <= KEYS ) && (realtimebyte == 248)) {
+  if ((Mode <= ARP ) && (realtimebyte == 248)) {
     counter ++;
     if ( counter == 12) {  // 8th notes stepswitch, counter resets
       counter = 0;
       if ((Pause == false) && (sequencerPaused == false)) {
         // Only play when clock is running
         stepCounter ++;
-        if (stepCounter > stepLength) {
+        if (Mode < ARP && stepCounter > stepLength) {   // if stepcounter reaches the maximum defined steps
+          stepCounter = 1;
+        }
+        if (Mode == ARP && stepCounter > arpLength) {   // if stepcounter reaches the maximum defined steps, dependent on amoun of added notes
           stepCounter = 1;
         }
         midiNote(stepCounter, 1);
         updateLed(stepCounter);
+        if (Mode == STEPVIEW && showMenu == 1) {     // TODO; draw steps in screen whenm in stepview mode
+          draw("Step", stepCounter);
+        }
       }
     }
     if (counter == (6 + shuffle)) {      // 16th note, counter does not reset
       if ((Pause == false) && (sequencerPaused == false)) {// Only play when clock is running
         stepCounter ++;
-        midiNote(stepCounter, 1);
-        if (stepCounter > stepLength) {   // if counter is equal to the total amount of steps
+
+        if (Mode < ARP && stepCounter > stepLength) {  // if stepcounter reaches the maximum defined steps
           stepCounter = 1;
         }
+        if (Mode == ARP && stepCounter > arpLength) { // if stepcounter reaches the maximum defined steps, dependent on amoun of added notes
+          stepCounter = 1;
+        }
+        midiNote(stepCounter, 1);
         updateLed(stepCounter);
+        if (Mode == STEPVIEW && showMenu == 1) {
+          draw("Step", stepCounter);
+        }
       }
     }
   }
@@ -959,5 +1074,45 @@ void OnNoteOff(byte channel, byte note, byte velocity) {
   // add all your output component sets that will trigger with note ons
 }
 
+void sortArpNotes(int x) {
+
+  int i;
+  int j;
+  int temp[5];
+
+  switch (arpSequence) {
+    case 0:
+      for (j = 0; j < x; j++) {
+        for (i = 1; i < (x - j); i++) {
+          if (arpNotes[i - 1][PITCH] > arpNotes[i][PITCH]) {
+            for (int n = 0; n < 5; n++) {
+              temp[n] = arpNotes[i][n];
+              arpNotes[i][n] = arpNotes[i - 1][n] ;
+              arpNotes[i - 1][n]  = temp[n];
+            }
+          }
+        }
+      }
+      break;
+    case 1:
+      for (j = (x - 1); j > 0 ; j--) {
+        for (i = x; i > (0 + j); i--) {
+          if (arpNotes[i + 1][PITCH] > arpNotes[i][PITCH]) {
+            for (int n = 0; n < 5; n++) {
+              temp[n] = arpNotes[i][n];
+              arpNotes[i][n] = arpNotes[i + 1][n] ;
+              arpNotes[i + 1][n]  = temp[n];
+            }
+          }
+        }
+      }
+      break;
+   }
+  Sprintln("arpnotesequence");
+  Sprintln(arpSequence);
+  for (int y = 0; y > x; y++) {
+    Sprintln(arpNotes[y][PITCH]);
+  }
+}
 
 
