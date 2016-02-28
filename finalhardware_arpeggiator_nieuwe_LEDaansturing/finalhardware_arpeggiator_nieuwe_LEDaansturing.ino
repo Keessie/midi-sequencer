@@ -75,7 +75,7 @@ uint8_t menu_redraw_required = 0;
 #define SETUPMENU_ITEMS 4
 const char *setupmenu_strings[SETUPMENU_ITEMS] = { "Steplength", "Shuffle", "Midichannel", "Time unit"  };
 uint8_t setupmenu_redraw_required = 0;
-bool showMenu = 1;           // = 0 in default mode, 1 in encodermode
+int showMenu = 1;           // = 1 in default mode, 0 is, show stepselect mode, 2 is encoder is turned mode
 String stringBuffer;
 int valueBuffer;
 
@@ -350,21 +350,26 @@ void loop() {
 ///// update oled screen
 void updateOLED() {
   /// decide wat to draw on OLED screen
-
   u8g.firstPage();
   do {
     usbMIDI.read();
-    if (showMenu == 1) {
-      drawMenu();
+    if (showMenu == 0 && Mode <= STEPVIEW) {
+      draw("Stepselect", stepSelect);              // notify parameters to oled screen
     }
-    /* if (showMenu == 1 && Mode == STEPVIEW) {                  // hier nog aan werken
-       draw(stringBuffer, valueBuffer);
-     }
-     */else {
+
+    if (showMenu == 0 && Mode == ARP) {
+      draw("Sequence", (arpSequence + 1));            // notify parameters to oled screen
+    }
+    if (showMenu == 2) {                 // show the encoder value that has been adjusted, derived from the buffers that are altered in void encadjust
       draw(stringBuffer, valueBuffer);
     }
-  } while ( u8g.nextPage() );
 
+    /////////// cross out this section and the stepsequence select in arpeggiator mode starts to work
+    else if (showMenu == 1 ) {
+      drawMenu();
+    }
+    /////////////
+  } while ( u8g.nextPage() );
 }
 
 //// draw Oled menu
@@ -402,25 +407,24 @@ void drawMenu(void) {
       u8g.drawStr(d, i * h, setupmenu_strings[i]);
     }
   }
-
 }
 
 void draw(String i, int n) {
-
-
   // graphic commands to redraw the complete screen should be placed here
   u8g.setFont(u8g_font_helvR18);                  // check ugglib font size pages
-  u8g.setPrintPos(20, 20);
+  u8g.setPrintPos(5, 20);
 
   u8g.print(i);
-  u8g.setPrintPos(40, 42);
-
+  u8g.setPrintPos(50, 45);
+  Sprintln("ik teken");
+  Sprintln(i);
   u8g.print(n);
-  u8g.drawTriangle(0, 64, n, 64, n, (64 - (n / 4)));
-
+  if (showMenu == 2) {
+    u8g.drawTriangle(0, 64, n, 64, n, (64 - (n / 4)));
+  }
+  Sprintln(n);
   //u8g.drawTriangle(0, 64, 128, 64, fadeValue, (fadeValue / 4));            // teken een driehoek met 3 punten. Voor elk de x,y coordinaten vanaf linker tophoek
   // een driehoek die waarde weergeeft is bijv;    u8g.drawTriangle(0, 64, 128, 64, a, (a/4));   waar a de variable waarde is
-
 }
 
 
@@ -547,9 +551,8 @@ void keyPressed() {
                 for (int q = 0 ; q <= 32; q++) {
                   if (arpNotes[q][PITCH] == currentKey) {   //if the current selected note corresponds with an already played note
                     arpNotes[q][PITCH] = 0;
-                    arpLength --;
                     found = true;
-                    sortArpNotes(arpLength);
+                    sortArpNotes();
                     break;
                   }
                 }
@@ -660,8 +663,9 @@ void buttonRead(int m) {
     }
     if (Mode == ARP && arpSequence > 0) {
       arpSequence --;
-      sortArpNotes(arpLength);
+      sortArpNotes();
     }
+    showMenu = 0;
   }
 
   if (m == 3) {
@@ -669,11 +673,13 @@ void buttonRead(int m) {
       stepSelect ++;
       Sprintln("stepSelect ");
       Sprintln(stepSelect);
+
     }
-    if (Mode == ARP && arpSequence < 1) {
+    if (Mode == ARP && arpSequence < 3) {
       arpSequence++;
-      sortArpNotes(arpLength);
+      sortArpNotes();
     }
+    showMenu = 0;
   }
 
   if (m == 5) {
@@ -683,11 +689,12 @@ void buttonRead(int m) {
       Sprintln(Mode);
     }
     else {
-      Mode = 0;
+      Mode = SEQVIEW;
     }
   }
   updateLed(stepCounter);
   updateOLED();
+  timerEnc = millis();
 }
 
 
@@ -706,16 +713,20 @@ void addNote(int n) {     //  n is the key that is pressed
       }
     }
     if (found >= 0) {
+      if (n == 37 || n == 36) {
+        arpNotes[found][VELOCITY] = 0;                // sends no note when high B or C is selected; mute button
+      }
+      else {
+        arpNotes[found][VELOCITY] = 80;
+      }
       arpNotes[found][MUTE] = 0;
-      arpNotes[found][VELOCITY] = 80;
       arpNotes[found][LENGTH] = 40;
       arpNotes[found][OCTAVE] = 3;
       arpNotes[found][PITCH] = n;
       Sprintln("arpnote added ");
-      arpLength ++;
       Sprintln("arplength");
       Sprintln(arpLength);
-      sortArpNotes(arpLength);
+      sortArpNotes();
     }
   }
 
@@ -777,32 +788,35 @@ void updateLed(int x) {               // change to write shift register and the 
   const byte CYAN = 6;
   const byte BLUE = 7;
    */
-  Tlc.clear();    //sets all the grayscale values to zero
   for (int i = 0 ; i < 3; i ++) {      // set all menuledpins to zero
     digitalWrite(menuLed[i], LOW);
   }
-
-
-  ///
+  for (int i = 0; i < 37; i++) {
+    for (int j = 0; j < 3; j++) {
+      ledAdressbuffer[i][j] = 0;
+    }
+  }
   if (Mode == SEQVIEW) {
     digitalWrite(menuLed[1], 1);
     digitalWrite(menuLed[0], 1);
 
     for (int i = 0; i < stepLength; i = i + 4) {   //write every first beat of measure high
-      Tlc.set(ledAdress[i][2], 1);
-      Tlc.set(ledAdress[i][1], 1);
+      //Tlc.set(ledAdress[i][2], 1);
+      //Tlc.set(ledAdress[i][1], 1);
+      ledAdressbuffer[i][2] = 1;
+      ledAdressbuffer[i][1] = 1;
     }
 
-    Tlc.set(ledAdress[stepCounter - 1][1], 2 );   // write the current stepCounter value high
-    ledAdressOldbuffer[stepCounter - 1][1] = 19;
+    //Tlc.set(ledAdress[stepCounter - 1][1], 2 );   // write the current stepCounter value high
+    ledAdressbuffer[stepCounter - 1][1] = 2;
 
-    Tlc.set(ledAdress[stepSelect - 1][2], 30 );   // write the current stepSelect value high
-    ledAdressOldbuffer[stepSelect - 1][2] = 30;
+    //Tlc.set(ledAdress[stepSelect - 1][2], 30 );   // write the current stepSelect value high
+    ledAdressbuffer[stepSelect - 1][2] = 30;
 
     for (int i = 0; i < stepLength; i++) {
       if (notes[i][0][1] > 0) {
-        Tlc.set(ledAdress[i - 1][0], 23 );   // write steps that contain notes high
-        ledAdressOldbuffer[i - 1][0] = 23;
+        //Tlc.set(ledAdress[i - 1][0], 23 );   // write steps that contain notes high
+        ledAdressbuffer[i - 1][0] = 23;
       }
     }
   }
@@ -810,18 +824,20 @@ void updateLed(int x) {               // change to write shift register and the 
     digitalWrite(menuLed[0], 1);
     for (int r = 0 ; r < 10; r ++) {
       if ((notes[stepSelect][r][PITCH] > 0) && (notes[stepSelect][r][PITCH] <= 37)) {
-        Tlc.set(ledAdress[(notes[stepSelect][r][PITCH]) - 1][0], 23 );   // write the current written notes value high
-        ledAdressOldbuffer[(notes[stepSelect][r][PITCH]) - 1][0] = 23;
+        //Tlc.set(ledAdress[(notes[stepSelect][r][PITCH]) - 1][0], 23 );   // write the current written notes value high
+        ledAdressbuffer[(notes[stepSelect][r][PITCH]) - 1][0] = 23;
       }
     }
   }
   if (Mode == ARP) {
     for (int r = 0 ; r <= 32; r ++) {
       if (arpNotes[r][PITCH] > 0) {
-        Tlc.set(ledAdress[arpNotes[r][PITCH] - 1][0], 23 );
+        //Tlc.set(ledAdress[arpNotes[r][PITCH] - 1][0], 23 );
+        ledAdressbuffer[arpNotes[r][PITCH] - 1][0] = 23;
       }
     }
-    Tlc.set(ledAdress[arpNotes[stepCounter][PITCH] - 1][1], 2 );      // write the current played note high
+    //Tlc.set(ledAdress[arpNotes[stepCounter][PITCH] - 1][1], 2 );      // write the current played note high
+    ledAdressbuffer[arpNotes[stepCounter][PITCH] - 1][1] = 2;
   }
 
   if (Mode == KEYS) {
@@ -830,36 +846,40 @@ void updateLed(int x) {               // change to write shift register and the 
   if (Mode == STEPLENGTH) {
 
     for (int i = 7; i < 33; i = i + 8) {   //write every 8th step high
-      Tlc.set(ledAdress[i][2], 1);
-      Tlc.set(ledAdress[i][1], 1);
+      //Tlc.set(ledAdress[i][2], 1);
+      //Tlc.set(ledAdress[i][1], 1);
+      ledAdressbuffer[i][2] = 1;
+      ledAdressbuffer[i][1] = 1;
     }
 
-    Tlc.set(ledAdress[stepLength - 1][0], 23); // write the stepLength high
-    ledAdressOldbuffer[stepLength - 1][0] = 23;
+    //Tlc.set(ledAdress[stepLength - 1][0], 23); // write the stepLength high
+    ledAdressbuffer[stepLength - 1][0] = 23;
 
-    Tlc.set(ledAdress[stepLength - 1][1], 19);
-    ledAdressOldbuffer[stepLength - 1][1] = 19;
+    //Tlc.set(ledAdress[stepLength - 1][1], 19);
+    ledAdressbuffer[stepLength - 1][1] = 19;
   }
   if (Mode == SHUFFLE) {
-    Tlc.set(ledAdress[shuffle][2], 30); // write the shuffle high
-    ledAdressOldbuffer[shuffle][2] = 30;
+    //Tlc.set(ledAdress[shuffle][2], 30); // write the shuffle high
+    ledAdressbuffer[shuffle][2] = 30;
 
-    Tlc.set(ledAdress[shuffle][1], 19);
-    ledAdressOldbuffer[shuffle][1] = 19;
+    //Tlc.set(ledAdress[shuffle][1], 19);
+    ledAdressbuffer[shuffle][1] = 19;
   }
   if (Mode ==  MIDICHANNEL) {
-    Tlc.set(ledAdress[midiChannel - 1][0], 23); // write the midiChannel high
-    ledAdressOldbuffer[midiChannel - 1][0] = 23;
+    //Tlc.set(ledAdress[midiChannel - 1][0], 23); // write the midiChannel high
+    ledAdressbuffer[midiChannel - 1][0] = 23;
 
-    Tlc.set(ledAdress[midiChannel - 1][2], 30);
-    ledAdressOldbuffer[midiChannel - 1][2] = 30;
+    //Tlc.set(ledAdress[midiChannel - 1][2], 30);
+    ledAdressbuffer[midiChannel - 1][2] = 30;
 
   }
-   if (Mode ==  TIMEUNIT) {
-    Tlc.set(ledAdress[timeUnit - 1][0], 23);  // write timeunit high
-   }
-  
-  Tlc.update();
+  if (Mode ==  TIMEUNIT) {
+    //Tlc.set(ledAdress[timeUnit - 1][0], 23);  // write timeunit high
+    ledAdressbuffer[timeUnit - 1][0] = 23;
+  }
+
+  //Tlc.update();
+  updateTlc();
 }
 
 void updateTlc() {     ///// Reset the TLC and update writing to pin if necessary////
@@ -867,11 +887,7 @@ void updateTlc() {     ///// Reset the TLC and update writing to pin if necessar
 
   for (int a = 0 ; a < 37; a++) {
     for (int b = 0 ; b < 3; b++) {
-
-      if (ledAdressOldbuffer[a][b] != ledAdressbuffer[a][b]) {
-        Tlc.set(ledAdress[a][b], ledAdressbuffer[a][b]);
-      }
-      ledAdressOldbuffer[a][b] = ledAdressbuffer[a][b];
+      Tlc.set(ledAdress[a][b], ledAdressbuffer[a][b]);
     }
   }
   Tlc.update();
@@ -929,7 +945,7 @@ void encAdjust(int i, int n) {     // i; welke encoder command wordt gestuurd, n
           }
         }
         if (i < 2) {
-          showMenu = 0;     // stop displaying menu, some encoder has been turned
+          showMenu = 2;     // stop displaying menu, some encoder has been turned
           timerEnc = millis();
         }
       }
@@ -1006,12 +1022,10 @@ void encAdjust(int i, int n) {     // i; welke encoder command wordt gestuurd, n
     }
     Sprintln("Mode");
     Sprintln(Mode);
-    //timerEnc = 1;
     if (Mode == ARP) {
       stepCounter = 0;
     }
   }
-
   updateLed(stepCounter);
   updateOLED();
 }
@@ -1033,9 +1047,6 @@ void RealTimeSystem(byte realtimebyte) {
         }
         midiNote(stepCounter, 1);
         updateLed(stepCounter);
-        if (Mode == STEPVIEW && showMenu == 1) {     // TODO; draw steps in screen whenm in stepview mode
-          draw("Step", stepCounter);
-        }
       }
     }
     if (counter == ((6 * timeUnit) + shuffle)) {    // 16th note, counter does not reset
@@ -1050,9 +1061,6 @@ void RealTimeSystem(byte realtimebyte) {
         }
         midiNote(stepCounter, 1);
         updateLed(stepCounter);
-        if (Mode == STEPVIEW && showMenu == 1) {
-          draw("Step", stepCounter);
-        }
       }
     }
   }
@@ -1086,43 +1094,76 @@ void OnNoteOff(byte channel, byte note, byte velocity) {
   // add all your output component sets that will trigger with note ons
 }
 
-void sortArpNotes(int x) {
-
+void sortArpNotes() {
+  // perhaps determine the arp length here, to be sure
+  // arp length is the amount of found notes that contain pitch high than 0
+  int found = 0;
+  for (int i = 0; i < 33; i++) {
+    if (arpNotes[i][PITCH] > 0) {
+      found ++;
+    }
+  }
+  arpLength = found;
+  Sprintln("found");
+  Sprintln(found);
   int i;
   int j;
   int temp[5];
 
-  switch (arpSequence) {
-    case 0:
-      for (j = 0; j < x; j++) {
-        for (i = 1; i < (x - j); i++) {
-          if (arpNotes[i - 1][PITCH] > arpNotes[i][PITCH]) {
-            for (int n = 0; n < 5; n++) {
-              temp[n] = arpNotes[i][n];
-              arpNotes[i][n] = arpNotes[i - 1][n] ;
-              arpNotes[i - 1][n]  = temp[n];
-            }
+  if (arpSequence == 0 || arpSequence == 2 ) {  // arp sequence 0 and 2 need sorting from down to up
+    for (j = 0; j < arpLength; j++) {
+      for (i = 1; i < (arpLength - j); i++) {
+        if (arpNotes[i - 1][PITCH] > arpNotes[i][PITCH]) {
+          for (int n = 0; n < 5; n++) {
+            temp[n] = arpNotes[i][n];
+            arpNotes[i][n] = arpNotes[i - 1][n] ;
+            arpNotes[i - 1][n]  = temp[n];
           }
         }
       }
-      break;
-    case 1:
-      for (j = (x - 1); j > 0 ; j--) {
-        for (i = x; i > (0 + j); i--) {
-          if (arpNotes[i + 1][PITCH] > arpNotes[i][PITCH]) {
-            for (int n = 0; n < 5; n++) {
-              temp[n] = arpNotes[i][n];
-              arpNotes[i][n] = arpNotes[i + 1][n] ;
-              arpNotes[i + 1][n]  = temp[n];
-            }
+    }
+    if (arpSequence == 2) { /// 2Up 1 DOWN sequence, after sorting down to up
+
+      for (j = 1; j < arpLength; j += 2) {
+        for (i = 2; i < (arpLength - j); i += 2) {
+          for (int n = 0; n < 5; n++) {
+            temp[n] = arpNotes[j][n];
+            arpNotes[i - 1][n] = arpNotes[i][n];
+            arpNotes[i][n] = temp[n];
           }
         }
       }
-      break;
+    }
+  }
+  if (arpSequence == 1 || arpSequence == 3 ) {  // sort from up to down
+
+    for (j = (arpLength - 1); j > 0 ; j--) {
+      for (i = arpLength; i > (0 + j); i--) {
+        if (arpNotes[i + 1][PITCH] > arpNotes[i][PITCH]) {
+          for (int n = 0; n < 5; n++) {
+            temp[n] = arpNotes[i][n];
+            arpNotes[i][n] = arpNotes[i + 1][n] ;
+            arpNotes[i + 1][n]  = temp[n];
+          }
+        }
+      }
+    }
+    if (arpSequence == 3) { // 2 up 1 down sequence, after sorting up to down
+
+      for (j = 1; j < arpLength; j += 2) {
+        for (i = 2; i < (arpLength - j); i += 2) {
+          for (int n = 0; n < 5; n++) {
+            temp[n] = arpNotes[j][n];
+            arpNotes[i - 1][n] = arpNotes[i][n];
+            arpNotes[i][n] = temp[n];
+          }
+        }
+      }
+    }
   }
   Sprintln("arpnotesequence");
   Sprintln(arpSequence);
-  for (int y = 0; y > x; y++) {
+  for (int y = 0; y > arpLength; y++) {
     Sprintln(arpNotes[y][PITCH]);
   }
 }
