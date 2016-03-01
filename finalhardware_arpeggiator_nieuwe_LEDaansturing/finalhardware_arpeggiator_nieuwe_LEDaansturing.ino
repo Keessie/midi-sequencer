@@ -182,7 +182,7 @@ int buttonState [5];
 
 word portState;             // encoder pushbuttons at mcp chip
 bool encPres[3] = {false};
-
+int encoderTimer;
 
 //// sequencer steps & notes ////
 unsigned long timerOld[127];    // start position note, second array is for set notelength
@@ -274,24 +274,40 @@ void loop() {
   //Sprintln(portState);
   if (portState == 49151) {
     encPres[1] = true;
-    Sprintln("knopje 1");
+    //Sprintln("knopje 1");
+  } else {
+    encPres[1] = false;
   }
   if (portState == 32767) {
     encPres[0] = true;
-    Sprintln("knopje 0");
+    //Sprintln("knopje 0");
+  } else {
+    encPres[0] = false;
   }
   if (portState == 57343) {
     encPres[2] = true;
-    Sprintln("knopje 2");
+    //Sprintln("knopje 2");
   }
-
   else {
     buttonState[4] = 0;
+    encPres[2] = false;
   }
 
   if (DRE(encPres[2], buttonState[4])) {   //**straks uitbreiden naar 7
+    encoderTimer = millis();
+  }
+  if (encPres[2] == true & (encoderTimer > 0 )) {
+    if (timerNew > (encoderTimer + 500)) {
+      encoderTimer = 0;
+      buttonRead(6);
+    }
+  }
+  if (encPres[2] == false & (encoderTimer > 0)) {
+    encoderTimer = 0;
     buttonRead(5);
   }
+
+
 
   ///////----- Encoder read and debug
 
@@ -331,7 +347,7 @@ void loop() {
   for (int i = 0; i < 127; i++) {
     if (noteLengthBuffer[i] > 0) {                     // only look for notes, currently playing
       if (timerNew - timerOld[i] > (noteLengthBuffer[i] * 8 )) {     //  noteLengthBuffer * 8 to overcome max 255 notelength limit
-        usbMIDI.sendNoteOff((i + 35), 0, midiChannel);            // stop this certain note
+        usbMIDI.sendNoteOff(i , 0, midiChannel);            // stop this certain note
         noteLengthBuffer[i] = 0;                         // if note has been stopped once, not necessary to do this proces again
         Sprintln("note timer stopt noot");
       }
@@ -356,14 +372,12 @@ void updateOLED() {
     if (showMenu == 0 && Mode <= STEPVIEW) {
       draw("Stepselect", stepSelect);              // notify parameters to oled screen
     }
-
     if (showMenu == 0 && Mode == ARP) {
       draw("Sequence", (arpSequence + 1));            // notify parameters to oled screen
     }
     if (showMenu == 2) {                 // show the encoder value that has been adjusted, derived from the buffers that are altered in void encadjust
       draw(stringBuffer, valueBuffer);
     }
-
     /////////// cross out this section and the stepsequence select in arpeggiator mode starts to work
     else if (showMenu == 1 ) {
       drawMenu();
@@ -441,20 +455,17 @@ void midiNote(int i, int j) {// int i to determine noteposition, int j to determ
           noteVelBuffer[q] = notes[stepCounter][q][VELOCITY];
 
           int notePitchBuffer[10];
-          notePitchBuffer[q] = notes[stepCounter][q][PITCH];
+          notePitchBuffer[q] = (notes[stepCounter][q][PITCH] + ((notes[stepCounter][q][OCTAVE] * 12) - 1));
           noteLengthBuffer[notePitchBuffer[q]] = notes[stepCounter][q][LENGTH];    // stores the notelength of the played note in the buffer with the corresponding pitch
 
           if (notePitchBuffer[q] > 0 && notePitchBuffer[q] <= 127) {
-            usbMIDI.sendNoteOn(((notePitchBuffer[q]) + 35), noteVelBuffer[q] , midiChannel);    // add in octave correction to pitch
-            timerOld[notePitchBuffer[q]] = timerNew;
-
-            Sprintln("noot gespeeld");
-            Sprintln(notePitchBuffer[q]);
-
+            usbMIDI.sendNoteOn(notePitchBuffer[q] , noteVelBuffer[q] , midiChannel);    // add in octave correction to pitch
+                               timerOld[notePitchBuffer[q]] = timerNew;
+                               Sprintln("noot gespeeld");
+                               Sprintln(notePitchBuffer[q]);
           }
         }
       }
-
     }
     if (Mode == ARP && arpNotes[stepCounter][PITCH] > 0 && arpNotes[stepCounter][PITCH] <= 127) {
       usbMIDI.sendNoteOn((arpNotes[stepCounter][PITCH] + 35) , arpNotes[stepCounter][VELOCITY] , midiChannel);   // add in octave correction to pitch
@@ -652,6 +663,17 @@ void buttonRead(int m) {
         arpNotes[i][PITCH] = 0;
       }
       arpLength = 0;
+    }
+  }
+
+  if (m == 6 && Mode == SEQVIEW) {
+    for (int i = 0; i < 32; i++) {
+      for (int j = 0; j < 10; j++) {
+        for (int n = 0; n < 5; n ++) {
+          notes[i][j][n] = 0;
+          Sprintln("notes erased");
+        }
+      }
     }
   }
 
@@ -1108,13 +1130,13 @@ void sortArpNotes() {
   Sprintln(found);
   int i;
   int j;
-  int temp[5];
+  int temp[16];
 
   if (arpSequence == 0 || arpSequence == 2 ) {  // arp sequence 0 and 2 need sorting from down to up
     for (j = 0; j < arpLength; j++) {
       for (i = 1; i < (arpLength - j); i++) {
         if (arpNotes[i - 1][PITCH] > arpNotes[i][PITCH]) {
-          for (int n = 0; n < 5; n++) {
+          for (int n = 0; n < 16; n++) {
             temp[n] = arpNotes[i][n];
             arpNotes[i][n] = arpNotes[i - 1][n] ;
             arpNotes[i - 1][n]  = temp[n];
@@ -1126,7 +1148,7 @@ void sortArpNotes() {
 
       for (j = 1; j < arpLength; j += 2) {
         for (i = 2; i < (arpLength - j); i += 2) {
-          for (int n = 0; n < 5; n++) {
+          for (int n = 0; n < 16; n++) {
             temp[n] = arpNotes[j][n];
             arpNotes[i - 1][n] = arpNotes[i][n];
             arpNotes[i][n] = temp[n];
@@ -1140,7 +1162,7 @@ void sortArpNotes() {
     for (j = (arpLength - 1); j > 0 ; j--) {
       for (i = arpLength; i > (0 + j); i--) {
         if (arpNotes[i + 1][PITCH] > arpNotes[i][PITCH]) {
-          for (int n = 0; n < 5; n++) {
+          for (int n = 0; n < 16; n++) {
             temp[n] = arpNotes[i][n];
             arpNotes[i][n] = arpNotes[i + 1][n] ;
             arpNotes[i + 1][n]  = temp[n];
@@ -1152,7 +1174,7 @@ void sortArpNotes() {
 
       for (j = 1; j < arpLength; j += 2) {
         for (i = 2; i < (arpLength - j); i += 2) {
-          for (int n = 0; n < 5; n++) {
+          for (int n = 0; n < 16; n++) {
             temp[n] = arpNotes[j][n];
             arpNotes[i - 1][n] = arpNotes[i][n];
             arpNotes[i][n] = temp[n];
